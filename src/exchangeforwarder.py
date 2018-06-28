@@ -60,6 +60,9 @@ for item in reversed(unread.order_by('-datetime_received')):
         msg["To"] = ','.join(i.name + "<" + i.email_address + ">" for i in item.to_recipients)
     elif item.received_by is not None:
         msg["To"] = item.received_by.name + "<" + item.received_by.email_address + ">"
+    else:
+        print("No TO recipient was found")
+        continue
     
     msg["Subject"] = item.subject
     
@@ -96,7 +99,7 @@ for item in reversed(unread.order_by('-datetime_received')):
             item.is_read = True
             item.save()
     except:
-        print("Error handeling email")
+        print("Error marking email as processed")
         continue
     
     # Send email
@@ -107,6 +110,8 @@ for item in reversed(unread.order_by('-datetime_received')):
         p.communicate(msg.as_bytes())
     elif send_mode == "smtp":
         smtp_con.sendmail(config['DEFAULT']['FROM_EMAIL'], to_email, msg.as_string())
+    
+    print("Successfully sent email to: " + to_email + " from : " + msg["From"])
     
     # Sleep to prevent flooding/rate limiting
     time.sleep(1)
