@@ -54,7 +54,13 @@ for item in reversed(unread.order_by('-datetime_received')):
     msg = MIMEMultipart('alternative')
     msg["From"] = item.sender.name + "<" + item.sender.email_address + ">"
     msg['Reply-To'] = msg["From"]
-    msg["To"] = ','.join(i.name + "<" + i.email_address + ">" for i in item.to_recipients)
+    
+    # To recipients may be empty, in which case make the reciever the only 'to' email recipient
+    if item.to_recipients is not None:
+        msg["To"] = ','.join(i.name + "<" + i.email_address + ">" for i in item.to_recipients)
+    elif item.received_by is not None:
+        msg["To"] = item.received_by.name + "<" + item.received_by.email_address + ">"
+    
     msg["Subject"] = item.subject
     
     # Create text/html portions
