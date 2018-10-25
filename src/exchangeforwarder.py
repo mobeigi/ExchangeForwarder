@@ -22,13 +22,20 @@ from exchangelib import DELEGATE, IMPERSONATION, Account, Credentials, ServiceAc
     HTMLBody, Build, Version, FolderCollection
 from exchangelib.items import MeetingRequest
 
+import datetime
+from googleapiclient.discovery import build
+from httplib2 import Http
+from oauth2client import file, client, tools
+import json
+
 # Set CWD to script directory
 os.chdir(sys.path[0])
 
 # Setup config
 config = configparser.ConfigParser()
 config.read('config.ini')
-send_mode = config['DEFAULT']['SEND_MODE']
+send_mode = config['SMTP']['SEND_MODE']
+SCOPES = 'https://www.googleapis.com/auth/calendar'
 
 # Authenticate
 credentials = Credentials(config['DEFAULT']['USERNAME'], config['DEFAULT']['PASSWORD'])
@@ -40,11 +47,34 @@ to_email = config['DEFAULT']['TO_EMAIL']
 # Connect to smtp server
 if send_mode == "smtp":
     try:
-        smtp_con = smtplib.SMTP_SSL(config['DEFAULT']['SMTP_HOST'], config['DEFAULT']['SMTP_PORT'])
+        smtp_con = smtplib.SMTP_SSL(config['SMTP']['HOST'], config['SMTP']['PORT'])
         smtp_con.ehlo()
-        smtp_con.login(config['DEFAULT']['SMTP_SENDER_EMAIL'], config['DEFAULT']['SMTP_SENDER_PASSWORD'])
+        smtp_con.login(config['SMTP']['SENDER_EMAIL'], config['SMTP']['SENDER_PASSWORD'])
     except:
         exit('Exception occured')
+
+# Initialize Google Calendar
+store = file.Storage('token.json')
+creds = store.get()
+
+# Create JSON credentials.json payload
+json_data = {}
+json_data['installed'] = {}
+json_data['installed']['client_id'] = config['GOOGLE_CALENDAR']['CLIENT_ID']
+json_data['installed']['client_secret'] = config['GOOGLE_CALENDAR']['CLIENT_SECRET']
+json_data['installed']['project_id'] = config['GOOGLE_CALENDAR']['PROJECT_ID']
+json_data['installed']['auth_uri'] = config['GOOGLE_CALENDAR']['AUTH_URI']
+json_data['installed']['token_uri'] = config['GOOGLE_CALENDAR']['TOKEN_URI']
+json_data['installed']['auth_provider_x509_cert_url'] = config['GOOGLE_CALENDAR']['AUTH_PROVIDER_X509_CERT_URL']
+json_data['installed']['redirect_uris'] = config['GOOGLE_CALENDAR']['REDIRECT_URIS'].split(',')
+
+with open('credentials.json', 'w+') as outfile:
+    json.dump(json_data, outfile)
+
+if not creds or creds.invalid:
+    flow = client.flow_from_clientsecrets('credentials.json', SCOPES)
+    creds = tools.run_flow(flow, store)
+service = build('calendar', 'v3', http=creds.authorize(Http()))
 
 # Iterate unread emails from inbox
 unread = account.inbox.filter(is_read=False)
@@ -67,8 +97,8 @@ for item in reversed(unread.order_by('-datetime_received')):
     msg["Subject"] = item.subject
     
     # Create text/html portions
-    text = MIMEText(item.text_body, 'plain')
-    html = MIMEText(item.unique_body, 'html')
+    text = MIMEText(item.text_body if item.text_body is not None else "", 'plain')
+    html = MIMEText(item.unique_body if item.unique_body is not None else "", 'html')
     msg.attach(text)
     msg.attach(html)
     
@@ -91,19 +121,15 @@ for item in reversed(unread.order_by('-datetime_received')):
                 msg.attach(file)
        
     try:
-        # Delete MeetingRequest
-        if isinstance(item, MeetingRequest):
-            item.move_to_trash()
-        # Mark emails as read
-        else:
-            item.is_read = True
-            item.save()
+        # Mark item as read and save
+        item.is_read = True
+        item.save(update_fields=['is_read'])  # only save is_read field to avoid issues with MeetingRequest
     except:
         print("Error marking email as processed")
         continue
     
     # Send email
-    print("About to send email to: " + to_email + " from : " + msg["From"])
+    print("About to send email to: " + to_email + ", from: " + msg["From"])
     
     if send_mode == "sendmail":
         p = Popen(["/usr/sbin/sendmail", "-t", "-oi", to_email], stdin=PIPE)
@@ -111,8 +137,32 @@ for item in reversed(unread.order_by('-datetime_received')):
     elif send_mode == "smtp":
         smtp_con.sendmail(config['DEFAULT']['FROM_EMAIL'], to_email, msg.as_string())
     
-    print("Successfully sent email to: " + to_email + " from : " + msg["From"])
+    print("Successfully sent email to: " + to_email + ", from: " + msg["From"])
     
+    # Add to calendar if MeetingRequest
+    if isinstance(item, MeetingRequest):
+        event = {
+          'summary': item.subject,
+          'location': item.location,
+          'description': item.text_body if item.text_body is not None else "",
+          'start': {
+            'dateTime': item.start.ewsformat(),
+            'timeZone': str(item._start_timezone),
+          },
+          'end': {
+            'dateTime': item.end.ewsformat(),
+            'timeZone': str(item._end_timezone),
+          },
+          'attendees': msg["To"].split(','),
+          'reminders': {
+            'useDefault': True
+          },
+        }
+
+        event = service.events().insert(calendarId=config['GOOGLE_CALENDAR']['CALENDAR_ID'], body=event).execute()
+        
+        print("Successfully added Calendar event for: " + item.subject)
+            
     # Sleep to prevent flooding/rate limiting
     time.sleep(1)
     
