@@ -108,7 +108,9 @@ for item in reversed(unread.order_by('-datetime_received')):
             # Determine if internal image or external file attachment
             if attachment.content_type is not None and attachment.content_type.split('/')[0] == 'image':
                 img = MIMEImage(attachment.content, _subtype=attachment.content_type.split('/')[1])
-                img.add_header('Content-ID', '<' + attachment.content_id + '>')
+                
+                if attachment.content_id is not None:
+                    img.add_header('Content-ID', '<' + attachment.content_id + '>')
                 
                 if attachment.is_inline:
                     img.add_header('Content-Disposition', f'inline; filename="{attachment.name}"')
