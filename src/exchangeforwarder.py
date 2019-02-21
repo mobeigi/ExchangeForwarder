@@ -50,9 +50,9 @@ if send_mode == "smtp":
         smtp_con = smtplib.SMTP_SSL(config['SMTP']['HOST'], config['SMTP']['PORT'])
         smtp_con.ehlo()
         smtp_con.login(config['SMTP']['SENDER_EMAIL'], config['SMTP']['SENDER_PASSWORD'])
-    except:
-        exit('Exception occured')
-
+    except Exception as e:
+        exit('Exception occured: ' + str(e))
+        
 # Initialize Google Calendar
 store = file.Storage('token.json')
 creds = store.get()
